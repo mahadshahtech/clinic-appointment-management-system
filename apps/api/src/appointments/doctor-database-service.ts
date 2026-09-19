@@ -1,0 +1,42 @@
+import type { AppointmentStatus, DoctorAppointment, DoctorPatient } from "@nfc/contracts";
+import { and, asc, desc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import type { Database } from "../db/client.js";
+import type { DatabaseTransaction } from "../db/transaction.js";
+import { appointmentEvents, appointments, doctors, profiles,visitNotes } from "../db/schema/index.js";
+import { ApiError } from "../http/api-error.js";
+import { localAppointmentParts } from "./rules.js";
+import { assertDoctorTransition, type DoctorAction } from "./doctor-rules.js";
+import type { DoctorAppointmentService } from "./doctor-types.js";
+import { enqueueAppointmentEmail } from "../automation/outbox.js";
+const doctorProfiles=alias(profiles,"doctor_profiles");
+
+type Executor=Database|DatabaseTransaction;
+type Row={id:string;patientId:string;patientName:string;patientPhone:string;startAt:Date;endAt:Date;status:AppointmentStatus;createdAt:Date;noteId:string|null;noteContent:string|null;noteCreatedAt:Date|null};
+
+async function ownDoctorId(executor:Executor,profileId:string){const [doctor]=await executor.select({id:doctors.id}).from(doctors).where(eq(doctors.profileId,profileId)).limit(1);if(!doctor)throw new ApiError(404,"NOT_FOUND","No doctor record is linked to this profile.");return doctor.id;}
+function present(row:Row,now:Date):DoctorAppointment {const pending=row.status==="PENDING",confirmed=row.status==="CONFIRMED",started=now>=row.startAt;return {id:row.id,patient:{id:row.patientId,fullName:row.patientName,phone:row.patientPhone},startAt:row.startAt.toISOString(),endAt:row.endAt.toISOString(),...localAppointmentParts(row.startAt,row.endAt),status:row.status,createdAt:row.createdAt.toISOString(),canConfirm:pending&&!started,canReject:pending,canComplete:confirmed&&started,canMarkNoShow:confirmed&&started,visitNote:row.noteId?{id:row.noteId,appointmentId:row.id,note:row.noteContent!,createdAt:row.noteCreatedAt!.toISOString()}:null};}
+function baseQuery(executor:Executor){return executor.select({id:appointments.id,patientId:appointments.patientId,patientName:profiles.fullName,patientPhone:profiles.phone,startAt:appointments.startAt,endAt:appointments.endAt,status:appointments.status,createdAt:appointments.createdAt,noteId:visitNotes.id,noteContent:visitNotes.content,noteCreatedAt:visitNotes.createdAt}).from(appointments).innerJoin(profiles,eq(appointments.patientId,profiles.id)).leftJoin(visitNotes,eq(visitNotes.appointmentId,appointments.id));}
+async function load(executor:Executor,doctorId:string,appointmentId:string){const [row]=await baseQuery(executor).where(and(eq(appointments.id,appointmentId),eq(appointments.doctorId,doctorId))).limit(1);if(!row)throw new ApiError(404,"NOT_FOUND","Appointment was not found.");return row;}
+async function lockOwned(tx:DatabaseTransaction,doctorId:string,appointmentId:string){const [row]=await tx.select({id:appointments.id,startAt:appointments.startAt,endAt:appointments.endAt,status:appointments.status}).from(appointments).where(and(eq(appointments.id,appointmentId),eq(appointments.doctorId,doctorId))).limit(1).for("update");if(!row)throw new ApiError(404,"NOT_FOUND","Appointment was not found.");return row;}
+
+export function createDoctorAppointmentService(database:Database,clock:()=>Date=()=>new Date()):DoctorAppointmentService {
+  async function transition(profileId:string,appointmentId:string,action:DoctorAction){
+    const doctorId=await ownDoctorId(database,profileId);const now=clock();
+    await database.transaction(async tx=>{const current=await lockOwned(tx,doctorId,appointmentId);assertDoctorTransition(action,current.status,current.startAt,now);
+      const target=action==="CONFIRM"?"CONFIRMED":action==="REJECT"?"REJECTED":action==="COMPLETE"?"COMPLETED":"NO_SHOW";
+      const timestamps=action==="CONFIRM"?{confirmedAt:now}:action==="COMPLETE"?{completedAt:now}:{};
+      await tx.update(appointments).set({status:target,...timestamps}).where(and(eq(appointments.id,appointmentId),eq(appointments.doctorId,doctorId),eq(appointments.status,current.status)));
+      await tx.insert(appointmentEvents).values({appointmentId,eventType:`APPOINTMENT_${target}`,fromStatus:current.status,toStatus:target,actorProfileId:profileId,metadata:{transitionedAt:now.toISOString()}});
+      if(action==="CONFIRM"||action==="REJECT"){const [mail]=await tx.select({recipient:profiles.email,patientName:profiles.fullName,doctorName:doctorProfiles.fullName}).from(appointments).innerJoin(profiles,eq(appointments.patientId,profiles.id)).innerJoin(doctors,eq(appointments.doctorId,doctors.id)).innerJoin(doctorProfiles,eq(doctors.profileId,doctorProfiles.id)).where(eq(appointments.id,appointmentId)).limit(1);if(mail?.recipient)await enqueueAppointmentEmail(tx,{type:action==="CONFIRM"?"APPOINTMENT_CONFIRMATION_EMAIL":"APPOINTMENT_REJECTION_EMAIL",appointmentId,recipient:mail.recipient,patientName:mail.patientName,doctorName:mail.doctorName,startAt:current.startAt,key:`${action.toLowerCase()}:${appointmentId}:${current.startAt.toISOString()}`});}
+    });return present(await load(database,doctorId,appointmentId),clock());
+  }
+  return {
+    async list(profileId){const doctorId=await ownDoctorId(database,profileId);const rows=await baseQuery(database).where(eq(appointments.doctorId,doctorId)).orderBy(asc(appointments.startAt));const now=clock();return rows.map(row=>present(row,now));},
+    async get(profileId,appointmentId){const doctorId=await ownDoctorId(database,profileId);return present(await load(database,doctorId,appointmentId),clock());},
+    confirm:(profileId,id)=>transition(profileId,id,"CONFIRM"),reject:(profileId,id)=>transition(profileId,id,"REJECT"),complete:(profileId,id)=>transition(profileId,id,"COMPLETE"),markNoShow:(profileId,id)=>transition(profileId,id,"NO_SHOW"),
+    async listPatients(profileId){const doctorId=await ownDoctorId(database,profileId);const rows=await baseQuery(database).where(eq(appointments.doctorId,doctorId)).orderBy(desc(appointments.startAt));const now=clock();const grouped=new Map<string,DoctorPatient>();for(const row of rows){const current=grouped.get(row.patientId)??{id:row.patientId,fullName:row.patientName,phone:row.patientPhone,appointmentCount:0,lastAppointmentAt:null,nextAppointmentAt:null};current.appointmentCount++;if(row.startAt<=now&&(!current.lastAppointmentAt||row.startAt>new Date(current.lastAppointmentAt)))current.lastAppointmentAt=row.startAt.toISOString();if(row.startAt>now&&(!current.nextAppointmentAt||row.startAt<new Date(current.nextAppointmentAt)))current.nextAppointmentAt=row.startAt.toISOString();grouped.set(row.patientId,current);}return [...grouped.values()];},
+    async patientHistory(profileId,patientId){const doctorId=await ownDoctorId(database,profileId);const rows=await baseQuery(database).where(and(eq(appointments.doctorId,doctorId),eq(appointments.patientId,patientId))).orderBy(desc(appointments.startAt));if(!rows.length)throw new ApiError(404,"NOT_FOUND","Patient history was not found.");const now=clock();return rows.map(row=>present(row,now));},
+    async expirePending(appointmentId){const now=clock();return database.transaction(async tx=>{const [current]=await tx.select({status:appointments.status,startAt:appointments.startAt}).from(appointments).where(eq(appointments.id,appointmentId)).limit(1).for("update");if(!current||current.status!=="PENDING"||now<current.startAt)return false;await tx.update(appointments).set({status:"CANCELLED",cancelledAt:now,cancellationReason:"Pending appointment expired"}).where(and(eq(appointments.id,appointmentId),eq(appointments.status,"PENDING")));await tx.insert(appointmentEvents).values({appointmentId,eventType:"PENDING_EXPIRED",fromStatus:"PENDING",toStatus:"CANCELLED",metadata:{reason:"PENDING_EXPIRED",transitionedAt:now.toISOString()}});const [mail]=await tx.select({recipient:profiles.email,patientName:profiles.fullName,doctorName:doctorProfiles.fullName}).from(appointments).innerJoin(profiles,eq(appointments.patientId,profiles.id)).innerJoin(doctors,eq(appointments.doctorId,doctors.id)).innerJoin(doctorProfiles,eq(doctors.profileId,doctorProfiles.id)).where(eq(appointments.id,appointmentId)).limit(1);if(mail?.recipient)await enqueueAppointmentEmail(tx,{type:"APPOINTMENT_CANCELLATION_EMAIL",appointmentId,recipient:mail.recipient,patientName:mail.patientName,doctorName:mail.doctorName,startAt:current.startAt,reason:"Pending request expired",key:`expiry-cancellation:${appointmentId}:${current.startAt.toISOString()}`});return true;});},
+  };
+}

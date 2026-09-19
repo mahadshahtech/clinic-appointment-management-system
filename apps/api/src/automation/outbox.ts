@@ -1,0 +1,6 @@
+import { formatInTimeZone } from "date-fns-tz";
+import type { DatabaseTransaction } from "../db/transaction.js";
+import { automationEvents } from "../db/schema/index.js";
+import { CLINIC_TIMEZONE } from "../scheduling/timezone.js";
+export type EmailEventType="APPOINTMENT_CONFIRMATION_EMAIL"|"APPOINTMENT_REJECTION_EMAIL"|"APPOINTMENT_CANCELLATION_EMAIL"|"APPOINTMENT_REMINDER_EMAIL";
+export async function enqueueAppointmentEmail(tx:DatabaseTransaction,input:{type:EmailEventType;appointmentId:string;recipient:string;patientName:string;doctorName:string;startAt:Date;reason?:string;key:string}){const inserted=await tx.insert(automationEvents).values({eventType:input.type,aggregateType:"appointment",aggregateId:input.appointmentId,recipient:input.recipient,idempotencyKey:input.key,payload:{eventType:input.type,appointmentId:input.appointmentId,patientName:input.patientName,doctorName:input.doctorName,appointmentDate:formatInTimeZone(input.startAt,CLINIC_TIMEZONE,"yyyy-MM-dd"),appointmentTime:formatInTimeZone(input.startAt,CLINIC_TIMEZONE,"HH:mm"),timezone:CLINIC_TIMEZONE,...(input.reason?{cancellationReason:input.reason}:{})}}).onConflictDoNothing({target:automationEvents.idempotencyKey}).returning({id:automationEvents.id});return inserted.length===1;}

@@ -1,0 +1,22 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789639578714,
+      "tag": "0000_unknown_shen",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789641000000,
+      "tag": "0001_auth_profile_sync",
+      "breakpoints": true
+    },
+    { "idx": 2, "version": "7", "when": 1789642000000, "tag": "0002_profile_email", "breakpoints": true },
+    { "idx": 3, "version": "7", "when": 1789720000000, "tag": "0003_admin_doctor_audit", "breakpoints": true }
+  ]
+}

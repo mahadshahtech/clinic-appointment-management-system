@@ -1,0 +1,34 @@
+{
+  "name": "nowshera-family-clinic",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unified clinic appointment and patient management system",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -n web,api -c cyan,green \"npm:dev:web\" \"npm:dev:api\"",
+    "dev:web": "npm run dev --workspace @nfc/web",
+    "dev:api": "npm run dev --workspace @nfc/api",
+    "build": "npm run build --workspace @nfc/contracts && npm run build --workspace @nfc/api && npm run build --workspace @nfc/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:watch": "npm run test:watch --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace @nfc/api",
+    "db:migrate": "npm run db:migrate --workspace @nfc/api",
+    "db:seed": "npm run db:seed --workspace @nfc/api",
+    "db:studio": "npm run db:studio --workspace @nfc/api",
+    "test:db": "npm run test:db --workspace @nfc/api",
+    "automation:worker": "npm run automation:worker --workspace @nfc/api",
+    "lint": "npm run lint --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "latest"
+  }
+}

@@ -1,0 +1,11 @@
+import { cleanup,fireEvent,render,screen,waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach,describe,expect,it,vi } from "vitest";
+const state=vi.hoisted(()=>({role:"DOCTOR" as "DOCTOR"|"ADMIN"}));
+const authSession=vi.hoisted(()=>({user:{id:"doctor-user"},access_token:"invite-access"}));
+const updateUser=vi.hoisted(()=>vi.fn(async()=>({error:null})));
+const getSession=vi.hoisted(()=>vi.fn(async()=>({data:{session:authSession},error:null})));
+vi.mock("../lib/supabase",()=>({getSupabaseClient:()=>({auth:{updateUser,getSession,verifyOtp:vi.fn(),setSession:vi.fn(),exchangeCodeForSession:vi.fn()}})}));
+vi.mock("../lib/api",()=>({fetchCurrentProfile:vi.fn(async()=>({profile:{id:"doctor-user",role:state.role}}))}));
+import { SetPasswordPage } from "./set-password-page";
+describe("Doctor set-password flow",()=>{afterEach(()=>{cleanup();updateUser.mockClear();getSession.mockClear();state.role="DOCTOR";});it("updates the password only after API validation of the invite identity as a Doctor",async()=>{render(<MemoryRouter><SetPasswordPage/></MemoryRouter>);fireEvent.change(await screen.findByLabelText("New password"),{target:{value:"SecureDoctor123!"}});fireEvent.change(screen.getByLabelText("Confirm password"),{target:{value:"SecureDoctor123!"}});fireEvent.click(screen.getByRole("button",{name:"Set password"}));await waitFor(()=>expect(updateUser).toHaveBeenCalledWith({password:"SecureDoctor123!"}));expect(await screen.findByText("Your Doctor account is ready")).toBeInTheDocument();});it("never changes the password when the authoritative API role is Admin",async()=>{state.role="ADMIN";render(<MemoryRouter><SetPasswordPage/></MemoryRouter>);expect(await screen.findByRole("alert")).toHaveTextContent("not connected to the invited Doctor account");expect(screen.queryByRole("button",{name:"Set password"})).not.toBeInTheDocument();expect(updateUser).not.toHaveBeenCalled();});});

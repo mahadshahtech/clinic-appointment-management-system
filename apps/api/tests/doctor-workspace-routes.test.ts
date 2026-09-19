@@ -1,0 +1,17 @@
+import type { DoctorAppointment,DoctorPatient,SafeProfile,UserRole } from "@nfc/contracts";
+import request from "supertest";
+import { describe,expect,it,vi } from "vitest";
+import { createApp } from "../src/app.js";
+import type { DoctorAppointmentService } from "../src/appointments/doctor-types.js";
+import type { ApiEnvironment } from "../src/config/env.js";
+const env:ApiEnvironment={NODE_ENV:"test",PORT:4000,WEB_ORIGIN:"http://localhost:5173",LOG_LEVEL:"silent",SUPABASE_URL:"https://example.supabase.co",SUPABASE_PUBLISHABLE_KEY:"sb_publishable_test_value_long_enough"};
+const profileId="00000000-0000-4000-8000-000000000001",appointmentId="20000000-0000-4000-8000-000000000001",patientId="30000000-0000-4000-8000-000000000001";
+const item:DoctorAppointment={id:appointmentId,patient:{id:patientId,fullName:"Patient Test",phone:"+92000"},startAt:"2030-01-07T04:00:00.000Z",endAt:"2030-01-07T04:30:00.000Z",localDate:"2030-01-07",localStartTime:"09:00",localEndTime:"09:30",status:"PENDING",createdAt:"2029-01-01T00:00:00.000Z",canConfirm:true,canReject:true,canComplete:false,canMarkNoShow:false,visitNote:null};
+const patient:DoctorPatient={id:patientId,fullName:"Patient Test",phone:"+92000",appointmentCount:1,lastAppointmentAt:null,nextAppointmentAt:item.startAt};
+function service():DoctorAppointmentService{return {list:vi.fn(async()=>[item]),get:vi.fn(async()=>item),confirm:vi.fn(async()=>({...item,status:"CONFIRMED",canConfirm:false,canReject:false})),reject:vi.fn(async()=>({...item,status:"REJECTED",canConfirm:false,canReject:false})),complete:vi.fn(async()=>({...item,status:"COMPLETED"})),markNoShow:vi.fn(async()=>({...item,status:"NO_SHOW"})),listPatients:vi.fn(async()=>[patient]),patientHistory:vi.fn(async()=>[item]),expirePending:vi.fn(async()=>true)} as DoctorAppointmentService;}
+function setup(role:UserRole="DOCTOR"){const profile:SafeProfile={id:profileId,role,fullName:"Doctor",phone:"+921",dateOfBirth:null,gender:null,isActive:true},doctorService=service();return {doctorService,app:createApp(env,{tokenVerifier:{verify:async()=>({userId:profileId,email:null})},profileRepository:{findById:async()=>profile},doctorAppointmentService:doctorService})};}const auth={Authorization:"Bearer valid"};
+describe("assembled doctor workspace routes",()=>{
+  it("mounts list, details, transitions and treating-patient routes",async()=>{const c=setup();expect((await request(c.app).get("/api/v1/doctor/appointments").set(auth)).status).toBe(200);for(const action of ["confirm","reject","complete","no-show"])expect((await request(c.app).post(`/api/v1/doctor/appointments/${appointmentId}/${action}`).set(auth)).status).toBe(200);expect((await request(c.app).get("/api/v1/doctor/patients").set(auth)).body.data[0].fullName).toBe("Patient Test");expect((await request(c.app).get(`/api/v1/doctor/patients/${patientId}/history`).set(auth)).status).toBe(200);expect(c.doctorService.list).toHaveBeenCalledWith(profileId);});
+  it.each(["PATIENT","ADMIN"] as UserRole[])("forbids %s from doctor workspace",async role=>{const app=setup(role).app;expect((await request(app).get("/api/v1/doctor/appointments").set(auth)).status).toBe(403);expect((await request(app).post(`/api/v1/doctor/appointments/${appointmentId}/confirm`).set(auth)).status).toBe(403);expect((await request(app).get("/api/v1/doctor/patients").set(auth)).status).toBe(403);});
+  it("returns 401 without authentication rather than hiding the mounted route",async()=>expect((await request(setup().app).get("/api/v1/doctor/appointments")).status).toBe(401));
+});

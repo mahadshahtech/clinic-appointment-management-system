@@ -1,0 +1,7 @@
+import type { SafeProfile } from "@nfc/contracts";
+import request from "supertest";
+import { describe,expect,it,vi } from "vitest";
+import { createApp } from "../src/app.js";
+import type { ApiEnvironment } from "../src/config/env.js";
+const env:ApiEnvironment={NODE_ENV:"test",PORT:4000,WEB_ORIGIN:"http://localhost:5173",LOG_LEVEL:"silent",SUPABASE_URL:"https://example.supabase.co",SUPABASE_PUBLISHABLE_KEY:"sb_publishable_test_value_long_enough"};
+describe("inactive Doctor access",()=>{it("blocks a valid Auth identity when its authoritative profile is inactive",async()=>{const profile:SafeProfile={id:"00000000-0000-4000-8000-000000000001",role:"DOCTOR",fullName:"Inactive Doctor",phone:"+92000",dateOfBirth:null,gender:null,isActive:false};const service={listOwnSchedule:vi.fn(),createOwnSchedule:vi.fn(),updateOwnSchedule:vi.fn(),deleteOwnSchedule:vi.fn(),listOwnLeave:vi.fn(),createOwnLeave:vi.fn(),deleteOwnLeave:vi.fn(),listDoctors:vi.fn(),getDoctor:vi.fn(),getAvailability:vi.fn()};const app=createApp(env,{tokenVerifier:{verify:async()=>({userId:profile.id,email:"doctor@example.test"})},profileRepository:{findById:async()=>profile},schedulingService:service});const response=await request(app).get("/api/v1/doctor/schedule").set("Authorization","Bearer valid");expect(response.status).toBe(403);expect(response.body.error.code).toBe("PROFILE_UNAVAILABLE");expect(service.listOwnSchedule).not.toHaveBeenCalled();});});

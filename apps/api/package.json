@@ -1,0 +1,51 @@
+{
+  "name": "@nfc/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsup src/server.ts src/automation/worker.ts --format esm --clean --sourcemap",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:db": "vitest run tests/database",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/commands/migrate.ts",
+    "db:seed": "tsx src/db/commands/seed.ts",
+    "db:studio": "drizzle-kit studio",
+    "automation:worker": "node dist/automation/worker.js",
+    "automation:worker:dev": "tsx src/automation/worker.ts",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@nfc/contracts": "*",
+    "@supabase/supabase-js": "^2.116.0",
+    "cors": "latest",
+    "date-fns": "^4.4.0",
+    "date-fns-tz": "^3.2.0",
+    "dotenv": "latest",
+    "drizzle-orm": "^0.45.2",
+    "express": "latest",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "latest",
+    "pino": "latest",
+    "pino-http": "latest",
+    "postgres": "^3.4.9",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/cors": "latest",
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "@types/supertest": "latest",
+    "drizzle-kit": "^0.31.10",
+    "rimraf": "latest",
+    "supertest": "latest",
+    "tsup": "latest",
+    "tsx": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
