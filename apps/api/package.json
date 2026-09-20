@@ -7,7 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsup src/server.ts src/automation/worker.ts --format esm --clean --sourcemap",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:db": "vitest run tests/database",
     "test:watch": "vitest",
@@ -22,6 +22,9 @@
   "dependencies": {
     "@nfc/contracts": "*",
     "@supabase/supabase-js": "^2.116.0",
+    "@types/cors": "latest",
+    "@types/express": "latest",
+    "@types/node": "latest",
     "cors": "latest",
     "date-fns": "^4.4.0",
     "date-fns-tz": "^3.2.0",
@@ -36,9 +39,6 @@
     "zod": "latest"
   },
   "devDependencies": {
-    "@types/cors": "latest",
-    "@types/express": "latest",
-    "@types/node": "latest",
     "@types/supertest": "latest",
     "drizzle-kit": "^0.31.10",
     "rimraf": "latest",
