@@ -30,5 +30,8 @@
   },
   "devDependencies": {
     "concurrently": "latest"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
   }
 }
