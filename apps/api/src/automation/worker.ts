@@ -1,2 +1,53 @@
-import "dotenv/config";import { z } from "zod";import { loadDatabaseEnvironment } from "../config/database-env.js";import { createDatabase } from "../db/client.js";import { createDoctorAppointmentService } from "../appointments/doctor-database-service.js";import { safeOperationalError } from "../http/safe-error.js";import { createAutomationService } from "./service.js";import { createConsoleDelivery,createN8nDelivery } from "./delivery.js";
-const env=z.object({EMAIL_DELIVERY_MODE:z.enum(["console","n8n"]).default("console"),N8N_EMAIL_WEBHOOK_URL:z.string().url().optional(),N8N_WEBHOOK_SECRET:z.string().min(16).optional(),AUTOMATION_POLL_INTERVAL_MS:z.coerce.number().int().min(10000).default(60000),AUTOMATION_BATCH_SIZE:z.coerce.number().int().min(1).max(100).default(25),AUTOMATION_RUN_ONCE:z.enum(["true","false"]).default("false")}).parse(process.env);if(env.EMAIL_DELIVERY_MODE==="n8n"&&(!env.N8N_EMAIL_WEBHOOK_URL||!env.N8N_WEBHOOK_SECRET))throw new Error("n8n mode requires N8N_EMAIL_WEBHOOK_URL and N8N_WEBHOOK_SECRET.");console.info("Automation worker configured",{deliveryMode:env.EMAIL_DELIVERY_MODE,webhookConfigured:Boolean(env.N8N_EMAIL_WEBHOOK_URL),webhookHost:env.N8N_EMAIL_WEBHOOK_URL?new URL(env.N8N_EMAIL_WEBHOOK_URL).host:undefined});const connection=createDatabase(loadDatabaseEnvironment()),doctor=createDoctorAppointmentService(connection.db),delivery=env.EMAIL_DELIVERY_MODE==="n8n"?createN8nDelivery(env.N8N_EMAIL_WEBHOOK_URL!,env.N8N_WEBHOOK_SECRET!):createConsoleDelivery(),automation=createAutomationService(connection.db,doctor,delivery,{batchSize:env.AUTOMATION_BATCH_SIZE});let running=false;async function tick(){if(running)return;running=true;try{const expired=await automation.expireDue(),reminders=await automation.generateReminders(),delivered=await automation.processOutbox();console.info("Automation cycle completed",{expired,reminders,delivered});}catch(error){console.error("Automation cycle failed",safeOperationalError(error));}finally{running=false;}}await tick();if(env.AUTOMATION_RUN_ONCE==="true"){await connection.close();}else{const timer=setInterval(tick,env.AUTOMATION_POLL_INTERVAL_MS);async function stop(){clearInterval(timer);await connection.close();process.exit(0);}process.on("SIGINT",stop);process.on("SIGTERM",stop);}
+import "dotenv/config";
+
+import { createDoctorAppointmentService } from "../appointments/doctor-database-service.js";
+import { loadDatabaseEnvironment } from "../config/database-env.js";
+import { createDatabase } from "../db/client.js";
+import { safeOperationalError } from "../http/safe-error.js";
+import { loadAutomationEnvironment } from "./config.js";
+import { runAutomationCycle } from "./cycle.js";
+import { createConsoleDelivery, createN8nDelivery } from "./delivery.js";
+import { createAutomationService } from "./service.js";
+
+const environment = loadAutomationEnvironment();
+console.info("Automation worker configured", {
+  deliveryMode: environment.EMAIL_DELIVERY_MODE,
+  webhookConfigured: Boolean(environment.N8N_EMAIL_WEBHOOK_URL),
+  webhookHost: environment.N8N_EMAIL_WEBHOOK_URL ? new URL(environment.N8N_EMAIL_WEBHOOK_URL).host : undefined,
+});
+
+const connection = createDatabase(loadDatabaseEnvironment());
+const doctor = createDoctorAppointmentService(connection.db);
+const delivery = environment.EMAIL_DELIVERY_MODE === "n8n"
+  ? createN8nDelivery(environment.N8N_EMAIL_WEBHOOK_URL!, environment.N8N_WEBHOOK_SECRET!)
+  : createConsoleDelivery();
+const automation = createAutomationService(connection.db, doctor, delivery, {
+  batchSize: environment.AUTOMATION_BATCH_SIZE,
+});
+
+let running = false;
+async function tick() {
+  if (running) return;
+  running = true;
+  try {
+    console.info("Automation cycle completed", await runAutomationCycle(automation));
+  } catch (error) {
+    console.error("Automation cycle failed", safeOperationalError(error));
+  } finally {
+    running = false;
+  }
+}
+
+await tick();
+if (environment.AUTOMATION_RUN_ONCE === "true") {
+  await connection.close();
+} else {
+  const timer = setInterval(tick, environment.AUTOMATION_POLL_INTERVAL_MS);
+  async function stop() {
+    clearInterval(timer);
+    await connection.close();
+    process.exit(0);
+  }
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+}

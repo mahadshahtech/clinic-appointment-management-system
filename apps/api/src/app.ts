@@ -18,6 +18,14 @@ import type { VisitNoteService } from "./appointments/visit-note-types.js";
 import { createVisitNoteRouters } from "./routes/visit-notes.js";
 import type { AdminService } from "./admin/types.js";
 import { createAdminRouter } from "./routes/admin.js";
+import { createAutomationRouter, type AutomationCycleRunner } from "./routes/automation.js";
+
+export const HTTP_REDACT_PATHS = [
+  "req.headers.authorization",
+  "req.headers.cookie",
+  "req.headers.x-nfc-automation-secret",
+  "res.headers.set-cookie",
+] as const;
 
 export interface AppDependencies {
   tokenVerifier: TokenVerifier;
@@ -27,6 +35,7 @@ export interface AppDependencies {
   doctorAppointmentService?: DoctorAppointmentService;
   visitNoteService?: VisitNoteService;
   adminService?:AdminService;
+  automation?: { triggerSecret: string; runCycle: AutomationCycleRunner };
 }
 
 export function createApp(environment: ApiEnvironment, dependencies: AppDependencies) {
@@ -43,7 +52,7 @@ export function createApp(environment: ApiEnvironment, dependencies: AppDependen
   app.use(express.json({ limit: "1mb" }));
   app.use(pinoHttp({
     level: environment.LOG_LEVEL,
-    redact: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"],
+    redact: [...HTTP_REDACT_PATHS],
   }));
 
   app.use("/api/v1/health", healthRouter);
@@ -57,6 +66,7 @@ export function createApp(environment: ApiEnvironment, dependencies: AppDependen
   if (dependencies.doctorAppointmentService) app.use("/api/v1/doctor", createDoctorWorkspaceRouter(dependencies.tokenVerifier, dependencies.profileRepository, dependencies.doctorAppointmentService));
   if(dependencies.visitNoteService){const notes=createVisitNoteRouters(dependencies.tokenVerifier,dependencies.profileRepository,dependencies.visitNoteService);app.use("/api/v1/doctor/appointments",notes.doctor);app.use("/api/v1/patient/appointments",notes.patient);}
   if(dependencies.adminService)app.use("/api/v1/admin",createAdminRouter(dependencies.tokenVerifier,dependencies.profileRepository,dependencies.adminService,environment.WEB_ORIGIN));
+  if (dependencies.automation) app.use("/api/v1/internal/automation", createAutomationRouter(dependencies.automation.triggerSecret, dependencies.automation.runCycle));
 
   app.use(notFoundHandler);
   app.use(errorHandler);
