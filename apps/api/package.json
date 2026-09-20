@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsup src/server.ts src/automation/worker.ts --format esm --clean --sourcemap",
+    "build": "tsup src/server.ts src/vercel-app.ts src/automation/worker.ts --format esm --clean --sourcemap",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
